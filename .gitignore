@@ -1,0 +1,19 @@
+# doomgeneric clone (large, users clone themselves)
+doom/doomgeneric/
+
+# Build artifacts
+*.o
+build_pz/
+
+# WAD files (large binaries, not suitable for git)
+*.wad
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~

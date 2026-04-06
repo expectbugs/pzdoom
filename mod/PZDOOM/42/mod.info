@@ -1,0 +1,8 @@
+name=DOOM
+id=PZDOOM
+require=PZFB
+description=Play DOOM in Project Zomboid. Right-click any TV!
+poster=poster.png
+icon=icon.png
+modversion=0.1.0
+versionMin=42.0
