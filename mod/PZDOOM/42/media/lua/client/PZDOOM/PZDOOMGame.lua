@@ -112,35 +112,29 @@ local function isWindows()
 end
 
 --
--- Check if a path contains spaces (breaks extraArgs whitespace splitting)
+-- User data directory for deployed DOOM binary and custom WADs.
 --
-local function hasSpaces(path)
-    return string.find(path, " ") ~= nil
+local function getUserDir()
+    return Core.getMyDocumentFolder() .. getFileSeparator() .. "PZDOOM"
 end
 
 --
--- Try to find a file in the mod's media/doom/ directory.
--- Handles uncertainty about what getDir() returns (mod root vs version dir)
--- by trying multiple path constructions with fileSize checks.
--- Returns the full path if found and usable, nil otherwise.
+-- Find a .dat file in the mod's media/doom/ directory.
+-- Handles uncertainty about what getDir() returns.
 --
-local function findInModDir(filename)
+local function findModDat(filename)
     local sep = getFileSeparator()
     local modInfo = getModInfoByID("PZDOOM")
     if not modInfo then return nil end
 
-    -- Try getDir() — might be mod root or version folder
     local dir = modInfo:getDir()
     if dir then
-        -- As version dir: dir/media/doom/filename
         local p = dir .. sep .. "media" .. sep .. "doom" .. sep .. filename
         if PZFB.fileSize(p) > 0 then return p end
-        -- As mod root: dir/42/media/doom/filename
         p = dir .. sep .. "42" .. sep .. "media" .. sep .. "doom" .. sep .. filename
         if PZFB.fileSize(p) > 0 then return p end
     end
 
-    -- Try getVersionDir() if available
     local ok, vdir = pcall(function() return modInfo:getVersionDir() end)
     if ok and vdir then
         local p = vdir .. sep .. "media" .. sep .. "doom" .. sep .. filename
@@ -151,25 +145,58 @@ local function findInModDir(filename)
 end
 
 --
+-- Auto-deploy binaries from mod .dat files to ~/Zomboid/PZDOOM/ on first run.
+-- Workshop blocks .exe/.dll/.sh, so binaries ship as .dat and get copied here.
+--
+local function deployBinaries()
+    local sep = getFileSeparator()
+    local destDir = getUserDir()
+
+    local files
+    if isWindows() then
+        files = {
+            { dat = "pzdoom_win.dat", dest = "pzdoom.exe" },
+            { dat = "SDL2.dat",       dest = "SDL2.dll" },
+            { dat = "SDL2_mixer.dat", dest = "SDL2_mixer.dll" },
+        }
+    else
+        files = {
+            { dat = "pzdoom.dat", dest = "pzdoom" },
+        }
+    end
+
+    for _, f in ipairs(files) do
+        local destPath = destDir .. sep .. f.dest
+        if PZFB.fileSize(destPath) <= 0 then
+            -- Not yet deployed — find the .dat in the mod folder and copy
+            local srcPath = findModDat(f.dat)
+            if srcPath then
+                print("[PZDOOM] Deploying " .. f.dat .. " -> " .. destPath)
+                PZFB.copyFile(srcPath, destPath)
+            end
+        end
+    end
+end
+
+--
 -- Find the DOOM binary path.
--- Priority: ~/Zomboid/PZDOOM/ first (user-controlled, no spaces),
--- then mod directory (only if path has no spaces).
+-- Auto-deploys from mod .dat files if not already present.
 --
 local function findBinary()
     local binaryName = isWindows() and "pzdoom.exe" or "pzdoom"
-    local sep = getFileSeparator()
+    local userPath = getUserDir() .. getFileSeparator() .. binaryName
 
-    -- Priority 1: ~/Zomboid/PZDOOM/ (user-controlled path, no spaces)
-    local userDir = Core.getMyDocumentFolder() .. sep .. "PZDOOM"
-    local userPath = userDir .. sep .. binaryName
+    -- Already deployed?
     if PZFB.fileSize(userPath) > 0 then
         return userPath
     end
 
-    -- Priority 2: mod directory (skip if path contains spaces)
-    local modPath = findInModDir(binaryName)
-    if modPath and not hasSpaces(modPath) then
-        return modPath
+    -- Try auto-deploy from mod's .dat files
+    deployBinaries()
+
+    -- Check again
+    if PZFB.fileSize(userPath) > 0 then
+        return userPath
     end
 
     return nil
@@ -177,7 +204,7 @@ end
 
 --
 -- Find all available WAD files.
--- Scans ~/Zomboid/PZDOOM/ first, then mod directory (skipping paths with spaces).
+-- Scans bundled WADs from mod directory + user WADs from ~/Zomboid/PZDOOM/.
 -- Returns table of {name=, path=} entries.
 --
 function PZDOOMGame.findWads()
@@ -185,43 +212,38 @@ function PZDOOMGame.findWads()
     local seen = {}
     local sep = getFileSeparator()
 
-    local function scanDir(dirPath, skipSpaces)
+    local function scanDir(dirPath)
         if not dirPath then return end
-        if skipSpaces and hasSpaces(dirPath) then return end
         local listing = PZFB.listDir(dirPath)
         if listing == "" then return end
         for line in string.gmatch(listing, "[^\n]+") do
             local lower = string.lower(line)
             if string.sub(lower, -4) == ".wad" and not seen[lower] then
-                local fullPath = dirPath .. sep .. line
-                if not skipSpaces or not hasSpaces(fullPath) then
-                    seen[lower] = true
-                    table.insert(wads, {
-                        name = line,
-                        path = fullPath,
-                    })
-                end
+                seen[lower] = true
+                table.insert(wads, {
+                    name = line,
+                    path = dirPath .. sep .. line,
+                })
             end
         end
     end
 
-    -- Priority 1: ~/Zomboid/PZDOOM/ (user-controlled, no spaces)
-    local userDir = Core.getMyDocumentFolder() .. sep .. "PZDOOM"
-    scanDir(userDir, false)
-
-    -- Priority 2: mod's media/doom/ directory (skip if path has spaces)
+    -- Bundled WADs from mod directory (delivered via Workshop)
     local modInfo = getModInfoByID("PZDOOM")
     if modInfo then
         local dir = modInfo:getDir()
         if dir then
-            scanDir(dir .. sep .. "media" .. sep .. "doom", true)
-            scanDir(dir .. sep .. "42" .. sep .. "media" .. sep .. "doom", true)
+            scanDir(dir .. sep .. "media" .. sep .. "doom")
+            scanDir(dir .. sep .. "42" .. sep .. "media" .. sep .. "doom")
         end
         local ok, vdir = pcall(function() return modInfo:getVersionDir() end)
         if ok and vdir then
-            scanDir(vdir .. sep .. "media" .. sep .. "doom", true)
+            scanDir(vdir .. sep .. "media" .. sep .. "doom")
         end
     end
+
+    -- User WADs from ~/Zomboid/PZDOOM/
+    scanDir(getUserDir())
 
     return wads
 end
