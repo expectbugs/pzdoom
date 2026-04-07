@@ -165,13 +165,16 @@ function PZDOOMWadPicker:onWadClick(button)
     end
 end
 
+function PZDOOMWadPicker:prerender()
+    ISPanel.prerender(self)
+    -- Background drawn in prerender so it's BEHIND child buttons
+    self:drawRect(0, 0, self.width, self.height, 0.95, 0.1, 0.1, 0.12)
+end
+
 function PZDOOMWadPicker:render()
     ISPanel.render(self)
 
-    -- Background
-    self:drawRect(0, 0, self.width, self.height, 0.95, 0.1, 0.1, 0.12)
-
-    -- Title
+    -- Title (drawn in render, on top of everything — text only, no background)
     local title = "Select a WAD file"
     local titleW = getTextManager():MeasureStringX(UIFont.Large, title)
     local titleX = math.floor((self.width - titleW) / 2)
