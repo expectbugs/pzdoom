@@ -48,10 +48,34 @@ local function buildKeyMap()
     KEY_MAP[Keyboard.KEY_MINUS]    = 0x2D  -- KEY_MINUS
 
     -- A-Z → lowercase ASCII (97-122)
-    -- Keyboard.KEY_A through KEY_Z are sequential in LWJGL
-    for i = 0, 25 do
-        KEY_MAP[Keyboard.KEY_A + i] = 97 + i
-    end
+    -- LWJGL key codes follow keyboard scan codes, NOT alphabetical order!
+    -- Verified from: javap -cp projectzomboid.jar org.lwjglx.input.Keyboard
+    KEY_MAP[Keyboard.KEY_A] = 97   -- 'a'
+    KEY_MAP[Keyboard.KEY_B] = 98   -- 'b'
+    KEY_MAP[Keyboard.KEY_C] = 99   -- 'c'
+    KEY_MAP[Keyboard.KEY_D] = 100  -- 'd'
+    KEY_MAP[Keyboard.KEY_E] = 101  -- 'e'
+    KEY_MAP[Keyboard.KEY_F] = 102  -- 'f'
+    KEY_MAP[Keyboard.KEY_G] = 103  -- 'g'
+    KEY_MAP[Keyboard.KEY_H] = 104  -- 'h'
+    KEY_MAP[Keyboard.KEY_I] = 105  -- 'i'
+    KEY_MAP[Keyboard.KEY_J] = 106  -- 'j'
+    KEY_MAP[Keyboard.KEY_K] = 107  -- 'k'
+    KEY_MAP[Keyboard.KEY_L] = 108  -- 'l'
+    KEY_MAP[Keyboard.KEY_M] = 109  -- 'm'
+    KEY_MAP[Keyboard.KEY_N] = 110  -- 'n'
+    KEY_MAP[Keyboard.KEY_O] = 111  -- 'o'
+    KEY_MAP[Keyboard.KEY_P] = 112  -- 'p'
+    KEY_MAP[Keyboard.KEY_Q] = 113  -- 'q'
+    KEY_MAP[Keyboard.KEY_R] = 114  -- 'r'
+    KEY_MAP[Keyboard.KEY_S] = 115  -- 's'
+    KEY_MAP[Keyboard.KEY_T] = 116  -- 't'
+    KEY_MAP[Keyboard.KEY_U] = 117  -- 'u'
+    KEY_MAP[Keyboard.KEY_V] = 118  -- 'v'
+    KEY_MAP[Keyboard.KEY_W] = 119  -- 'w'
+    KEY_MAP[Keyboard.KEY_X] = 120  -- 'x'
+    KEY_MAP[Keyboard.KEY_Y] = 121  -- 'y'
+    KEY_MAP[Keyboard.KEY_Z] = 122  -- 'z'
 
     -- Number keys → ASCII digits
     -- KEY_1 through KEY_9 are sequential, KEY_0 follows
@@ -88,73 +112,116 @@ local function isWindows()
 end
 
 --
--- Find the DOOM binary path
--- First checks the mod's media/doom/ directory, then ~/Zomboid/PZDOOM/
+-- Check if a path contains spaces (breaks extraArgs whitespace splitting)
 --
-local function findBinary()
-    local binaryName = isWindows() and "pzdoom.exe" or "pzdoom"
-    local sep = getFileSeparator()
+local function hasSpaces(path)
+    return string.find(path, " ") ~= nil
+end
 
-    -- Try mod directory first (where Workshop puts it)
-    -- The mod's media dir is accessible via getModInfoByID
+--
+-- Try to find a file in the mod's media/doom/ directory.
+-- Handles uncertainty about what getDir() returns (mod root vs version dir)
+-- by trying multiple path constructions with fileSize checks.
+-- Returns the full path if found and usable, nil otherwise.
+--
+local function findInModDir(filename)
+    local sep = getFileSeparator()
     local modInfo = getModInfoByID("PZDOOM")
-    if modInfo then
-        local modDir = modInfo:getDir()
-        if modDir then
-            local modPath = modDir .. sep .. "media" .. sep .. "doom" .. sep .. binaryName
-            if PZFB.fileSize(modPath) > 0 then
-                return modPath
-            end
-        end
+    if not modInfo then return nil end
+
+    -- Try getDir() — might be mod root or version folder
+    local dir = modInfo:getDir()
+    if dir then
+        -- As version dir: dir/media/doom/filename
+        local p = dir .. sep .. "media" .. sep .. "doom" .. sep .. filename
+        if PZFB.fileSize(p) > 0 then return p end
+        -- As mod root: dir/42/media/doom/filename
+        p = dir .. sep .. "42" .. sep .. "media" .. sep .. "doom" .. sep .. filename
+        if PZFB.fileSize(p) > 0 then return p end
     end
 
-    -- Fallback: ~/Zomboid/PZDOOM/
-    local userDir = Core.getMyDocumentFolder() .. sep .. "PZDOOM"
-    local userPath = userDir .. sep .. binaryName
-    if PZFB.fileSize(userPath) > 0 then
-        return userPath
+    -- Try getVersionDir() if available
+    local ok, vdir = pcall(function() return modInfo:getVersionDir() end)
+    if ok and vdir then
+        local p = vdir .. sep .. "media" .. sep .. "doom" .. sep .. filename
+        if PZFB.fileSize(p) > 0 then return p end
     end
 
     return nil
 end
 
 --
--- Find all available WAD files
--- Checks mod's media/doom/ and ~/Zomboid/PZDOOM/
--- Returns table of {name=, path=} entries
+-- Find the DOOM binary path.
+-- Priority: ~/Zomboid/PZDOOM/ first (user-controlled, no spaces),
+-- then mod directory (only if path has no spaces).
+--
+local function findBinary()
+    local binaryName = isWindows() and "pzdoom.exe" or "pzdoom"
+    local sep = getFileSeparator()
+
+    -- Priority 1: ~/Zomboid/PZDOOM/ (user-controlled path, no spaces)
+    local userDir = Core.getMyDocumentFolder() .. sep .. "PZDOOM"
+    local userPath = userDir .. sep .. binaryName
+    if PZFB.fileSize(userPath) > 0 then
+        return userPath
+    end
+
+    -- Priority 2: mod directory (skip if path contains spaces)
+    local modPath = findInModDir(binaryName)
+    if modPath and not hasSpaces(modPath) then
+        return modPath
+    end
+
+    return nil
+end
+
+--
+-- Find all available WAD files.
+-- Scans ~/Zomboid/PZDOOM/ first, then mod directory (skipping paths with spaces).
+-- Returns table of {name=, path=} entries.
 --
 function PZDOOMGame.findWads()
     local wads = {}
     local seen = {}
     local sep = getFileSeparator()
 
-    local function scanDir(dirPath)
+    local function scanDir(dirPath, skipSpaces)
+        if not dirPath then return end
+        if skipSpaces and hasSpaces(dirPath) then return end
         local listing = PZFB.listDir(dirPath)
         if listing == "" then return end
         for line in string.gmatch(listing, "[^\n]+") do
             local lower = string.lower(line)
             if string.sub(lower, -4) == ".wad" and not seen[lower] then
-                seen[lower] = true
-                table.insert(wads, {
-                    name = line,
-                    path = dirPath .. sep .. line,
-                })
+                local fullPath = dirPath .. sep .. line
+                if not skipSpaces or not hasSpaces(fullPath) then
+                    seen[lower] = true
+                    table.insert(wads, {
+                        name = line,
+                        path = fullPath,
+                    })
+                end
             end
         end
     end
 
-    -- Scan mod's media/doom/ directory
+    -- Priority 1: ~/Zomboid/PZDOOM/ (user-controlled, no spaces)
+    local userDir = Core.getMyDocumentFolder() .. sep .. "PZDOOM"
+    scanDir(userDir, false)
+
+    -- Priority 2: mod's media/doom/ directory (skip if path has spaces)
     local modInfo = getModInfoByID("PZDOOM")
     if modInfo then
-        local modDir = modInfo:getDir()
-        if modDir then
-            scanDir(modDir .. sep .. "media" .. sep .. "doom")
+        local dir = modInfo:getDir()
+        if dir then
+            scanDir(dir .. sep .. "media" .. sep .. "doom", true)
+            scanDir(dir .. sep .. "42" .. sep .. "media" .. sep .. "doom", true)
+        end
+        local ok, vdir = pcall(function() return modInfo:getVersionDir() end)
+        if ok and vdir then
+            scanDir(vdir .. sep .. "media" .. sep .. "doom", true)
         end
     end
-
-    -- Scan ~/Zomboid/PZDOOM/
-    local userDir = Core.getMyDocumentFolder() .. sep .. "PZDOOM"
-    scanDir(userDir)
 
     return wads
 end

@@ -1,9 +1,15 @@
 # doomgeneric clone (large, users clone themselves)
 doom/doomgeneric/
 
+# MinGW SDL2 dev packages (large, downloaded by build script)
+doom/mingw-sdl2/
+
 # Build artifacts
 *.o
 build_pz/
+
+# DOOM savegames
+.savegame/
 
 # WAD files (large binaries, not suitable for git)
 *.wad

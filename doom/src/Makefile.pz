@@ -18,12 +18,16 @@ CC ?= gcc
 CROSS ?=
 
 # Cross-compilation support
+# For Windows: set CROSS=x86_64-w64-mingw32- and MINGW_SDL2 to the prefix
+MINGW_SDL2 ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../mingw-sdl2)
+
 ifneq ($(CROSS),)
 	CC = $(CROSS)gcc
 	OUTPUT = pzdoom.exe
-	# Windows: link SDL2 statically or use DLLs
-	SDL_CFLAGS = $(shell $(CROSS)pkg-config --cflags sdl2 SDL2_mixer 2>/dev/null || echo -I/usr/$(CROSS:%-=%)/include/SDL2)
-	SDL_LIBS = $(shell $(CROSS)pkg-config --libs sdl2 SDL2_mixer 2>/dev/null || echo -lmingw32 -lSDL2main -lSDL2 -lSDL2_mixer)
+	MINGW_SDL2_PREFIX = $(MINGW_SDL2)/SDL2-2.30.12/x86_64-w64-mingw32
+	MINGW_MIX_PREFIX = $(MINGW_SDL2)/SDL2_mixer-2.8.1/x86_64-w64-mingw32
+	SDL_CFLAGS = -I$(MINGW_SDL2_PREFIX)/include/SDL2 -I$(MINGW_MIX_PREFIX)/include/SDL2
+	SDL_LIBS = -L$(MINGW_SDL2_PREFIX)/lib -L$(MINGW_MIX_PREFIX)/lib -lmingw32 -lSDL2main -lSDL2 -lSDL2_mixer
 	LDFLAGS += -static-libgcc
 	LIBS += -lm $(SDL_LIBS) -lws2_32 -lwinmm
 else
@@ -39,8 +43,17 @@ CFLAGS += -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
 # Enable sound via SDL2_mixer
 CFLAGS += -DFEATURE_SOUND $(SDL_CFLAGS)
 
-# Standard flags
-CFLAGS += -O2 -Wall -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE
+# Standard flags (shared)
+# -std=gnu99: doomgeneric defines true/false as enum values, which conflicts with C23 keywords
+CFLAGS += -std=gnu99 -O2 -Wall -D_DEFAULT_SOURCE
+
+# Platform-specific flags
+ifneq ($(CROSS),)
+# Windows cross-compile — no NORMALUNIX/LINUX defines
+else
+CFLAGS += -DNORMALUNIX -DLINUX
+endif
+
 LDFLAGS += -Wl,--gc-sections
 
 # Subdirectory for objects

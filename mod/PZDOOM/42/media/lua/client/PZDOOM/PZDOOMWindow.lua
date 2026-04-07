@@ -133,7 +133,6 @@ function PZDOOMWadPicker:refresh()
     self.wads = PZDOOMGame.findWads()
 
     local y = 10
-    local centerX = self.width / 2
 
     -- Title
     -- (drawn in render)
