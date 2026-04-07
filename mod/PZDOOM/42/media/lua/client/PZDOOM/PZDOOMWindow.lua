@@ -145,9 +145,9 @@ function PZDOOMWadPicker:refresh()
         btn.internal = "WAD_" .. i
         btn:initialise()
         btn:instantiate()
-        btn.borderColor = {r=0.6, g=0.6, b=0.6, a=0.9}
-        btn.textColor = {r=1, g=1, b=1, a=1}
-        btn.backgroundColor = {r=0.2, g=0.2, b=0.25, a=0.8}
+        btn.borderColor = {r=0.7, g=0.2, b=0.2, a=0.9}
+        btn.textColor = {r=1, g=0.3, b=0.3, a=1}
+        btn.backgroundColor = {r=0.15, g=0.05, b=0.05, a=0.8}
         self:addChild(btn)
         table.insert(self.buttons, btn)
         y = y + BUTTON_HGT + 8
@@ -175,7 +175,7 @@ function PZDOOMWadPicker:render()
     local title = "Select a WAD file"
     local titleW = getTextManager():MeasureStringX(UIFont.Large, title)
     local titleX = math.floor((self.width - titleW) / 2)
-    self:drawText(title, titleX, 10, 1, 1, 1, 0.95, UIFont.Large)
+    self:drawText(title, titleX, 10, 1, 0.2, 0.2, 0.95, UIFont.Large)
 
     -- Subtitle
     local subtitle = "Choose a DOOM WAD to play"
