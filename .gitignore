@@ -14,9 +14,6 @@ build_pz/
 # WAD files (large binaries, not suitable for git)
 *.wad
 
-# Claude
-CLAUDE.md
-
 # OS junk
 .DS_Store
 Thumbs.db
