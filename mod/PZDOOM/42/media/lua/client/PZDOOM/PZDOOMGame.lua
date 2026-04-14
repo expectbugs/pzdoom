@@ -291,7 +291,7 @@ function PZDOOMGame:start(wadPath)
     self.fb = PZFB.create(PZDOOMGame.DOOM_WIDTH, PZDOOMGame.DOOM_HEIGHT)
 
     -- Launch the process
-    local args = "-iwad " .. wadPath
+    local args = '-iwad "' .. wadPath .. '"'
     PZFB.gameStart(self.binaryPath, PZDOOMGame.DOOM_WIDTH, PZDOOMGame.DOOM_HEIGHT, args)
     self.state = "STARTING"
     self.errorMsg = nil
