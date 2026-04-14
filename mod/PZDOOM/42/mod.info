@@ -4,5 +4,5 @@ require=PZFB
 description=Play DOOM in Project Zomboid. Right-click any TV!
 poster=poster.png
 icon=icon.png
-modversion=0.1.0
+modversion=0.2.0
 versionMin=42.0
