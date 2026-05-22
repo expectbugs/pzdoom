@@ -50,6 +50,12 @@ CFLAGS += -std=gnu99 -O2 -Wall -D_DEFAULT_SOURCE
 # Platform-specific flags
 ifneq ($(CROSS),)
 # Windows cross-compile — no NORMALUNIX/LINUX defines
+# Pin the baseline ISA (x86-64-v1 / SSE2) for our own objects so that inherited
+# CFLAGS can never introduce BMI2/AVX into them. NOTE: the cross-toolchain's own
+# runtime libs (libmingwex.a etc.) must ALSO be built baseline — otherwise the
+# linked binary still carries BMI2 (shlx/shrx) and crashes on pre-2013 Intel /
+# pre-2015 AMD CPUs with STATUS_ILLEGAL_INSTRUCTION. See CHANGELOG 0.2.1.
+CFLAGS += -march=x86-64
 else
 CFLAGS += -DNORMALUNIX -DLINUX
 endif

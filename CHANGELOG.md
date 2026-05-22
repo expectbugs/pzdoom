@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1 — 2026-05-22
+
+Fixes a crash on older CPUs.
+
+### Fixed
+- **CRITICAL:** The Windows DOOM binary crashed immediately on launch
+  (`STATUS_ILLEGAL_INSTRUCTION`, reported as exit code 1073741795) on CPUs
+  without BMI2 — Intel pre-Haswell (pre-2013) and AMD pre-Excavator (pre-2015).
+  `pzdoom.exe` contained BMI2 instructions (`shlx`/`shrx`) pulled in from the
+  cross-compiler's runtime library; it is now built entirely against a baseline
+  `x86-64` target and runs on any 64-bit x86 CPU.
+
+## 0.2.0 — 2026-04-14
+
+### Fixed
+- Windows WAD paths containing spaces are now quoted correctly
+
 ## 0.1.1 — 2026-04-07
 
 Bug fixes and Windows support.
