@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 — 2026-05-22
+## 0.2.1 — 2026-05-23
 
 Fixes a crash on older CPUs.
 
@@ -11,6 +11,11 @@ Fixes a crash on older CPUs.
   `pzdoom.exe` contained BMI2 instructions (`shlx`/`shrx`) pulled in from the
   cross-compiler's runtime library; it is now built entirely against a baseline
   `x86-64` target and runs on any 64-bit x86 CPU.
+- `deployBinaries()` now redeploys the bundled binaries on a mod version bump.
+  Previously they were copied to `~/Zomboid/PZDOOM/` only on first run, so a
+  Workshop update couldn't replace a stale `pzdoom.exe` — affected players
+  would have had to delete it manually. Now the binary fix above propagates
+  automatically.
 
 ## 0.2.0 — 2026-04-14
 

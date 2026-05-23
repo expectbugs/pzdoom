@@ -145,12 +145,45 @@ local function findModDat(filename)
 end
 
 --
--- Auto-deploy binaries from mod .dat files to ~/Zomboid/PZDOOM/ on first run.
--- Workshop blocks .exe/.dll/.sh, so binaries ship as .dat and get copied here.
+-- Auto-deploy binaries from mod .dat files to ~/Zomboid/PZDOOM/ on first run
+-- and whenever the mod version changes. Workshop blocks .exe/.dll/.sh, so the
+-- binaries ship as .dat and get copied here. A version stamp at
+-- ~/Zomboid/Lua/PZDOOM_deployed_version.txt records which mod version last
+-- deployed; when mod.info's modversion bumps, we redeploy everything so a
+-- Workshop update actually replaces the previously-installed copy.
 --
+local STAMP_FILE = "PZDOOM_deployed_version.txt"
+
+local function readDeployedVersion()
+    local reader = getFileReader(STAMP_FILE, false)
+    if not reader then return nil end
+    local v = reader:readLine()
+    reader:close()
+    return v
+end
+
+local function writeDeployedVersion(version)
+    local writer = getFileWriter(STAMP_FILE, true, false)
+    if not writer then return end
+    writer:write(version)
+    writer:close()
+end
+
+local function getCurrentModVersion()
+    local modInfo = getModInfoByID("PZDOOM")
+    if not modInfo then return nil end
+    local ok, v = pcall(function() return modInfo:getModVersion() end)
+    if ok and v then return tostring(v) end
+    return nil
+end
+
 local function deployBinaries()
     local sep = getFileSeparator()
     local destDir = getUserDir()
+
+    local currentVersion = getCurrentModVersion()
+    local deployedVersion = readDeployedVersion()
+    local versionChanged = (currentVersion ~= nil) and (currentVersion ~= deployedVersion)
 
     local files
     if isWindows() then
@@ -165,16 +198,29 @@ local function deployBinaries()
         }
     end
 
+    local deployedAny = false
     for _, f in ipairs(files) do
         local destPath = destDir .. sep .. f.dest
-        if PZFB.fileSize(destPath) <= 0 then
-            -- Not yet deployed — find the .dat in the mod folder and copy
+        local missing = (PZFB.fileSize(destPath) <= 0)
+        if missing or versionChanged then
+            -- The versionChanged branch intentionally overwrites an existing
+            -- (possibly stale) copy. find + copy via PZFB's Java helpers.
             local srcPath = findModDat(f.dat)
             if srcPath then
-                print("[PZDOOM] Deploying " .. f.dat .. " -> " .. destPath)
+                local reason = missing and "missing" or ("mod v" .. tostring(currentVersion))
+                print("[PZDOOM] Deploying (" .. reason .. "): " .. f.dat .. " -> " .. destPath)
                 PZFB.copyFile(srcPath, destPath)
+                deployedAny = true
             end
         end
+    end
+
+    -- Stamp the version we just deployed. If findModDat returned nil for
+    -- everything (mod folder mis-located), leave the old stamp so we retry
+    -- next launch — and any per-file copy failure self-heals via the `missing`
+    -- branch on the following launch regardless.
+    if versionChanged and deployedAny and currentVersion then
+        writeDeployedVersion(currentVersion)
     end
 end
 
