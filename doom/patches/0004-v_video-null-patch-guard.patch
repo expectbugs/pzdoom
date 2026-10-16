@@ -1,0 +1,31 @@
+PZDOOM patch 0004 — V_DrawPatch NULL guard
+
+Defensive: never dereference a NULL patch (ST_unloadGraphics() NULLs the
+status-bar patch pointers). Carried over from PZDOOM 0.1.1.
+Applies on top of ozkl/doomgeneric @ 3b1d53020373b502035d7d48dede645a7c429feb.
+
+diff --git a/doomgeneric/v_video.c b/doomgeneric/v_video.c
+index 6db28aa..3caa360 100644
+--- a/doomgeneric/v_video.c
++++ b/doomgeneric/v_video.c
+@@ -137,7 +137,7 @@ void V_SetPatchClipCallback(vpatchclipfunc_t func)
+ //
+ 
+ void V_DrawPatch(int x, int y, patch_t *patch)
+-{ 
++{
+     int count;
+     int col;
+     column_t *column;
+@@ -146,6 +146,11 @@ void V_DrawPatch(int x, int y, patch_t *patch)
+     byte *source;
+     int w;
+ 
++    // PZDOOM: defensive null check. ST_unloadGraphics() NULLs the status bar
++    // patch pointers, and a NULL patch must never be dereferenced here.
++    if (!patch)
++        return;
++
+     y -= SHORT(patch->topoffset);
+     x -= SHORT(patch->leftoffset);
+ 

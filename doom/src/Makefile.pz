@@ -62,8 +62,13 @@ endif
 
 LDFLAGS += -Wl,--gc-sections
 
-# Subdirectory for objects
+# Subdirectory for objects — separate per target so a Linux build and a
+# Windows cross-build can coexist in the same tree.
+ifneq ($(CROSS),)
+OBJDIR = build_pz_win
+else
 OBJDIR = build_pz
+endif
 # Output binary name set above
 
 # Source objects: same as Makefile.sdl but with doomgeneric_pz.o instead of doomgeneric_sdl.o
@@ -74,7 +79,7 @@ OBJS = $(addprefix $(OBJDIR)/, $(SRC_DOOM))
 all: $(OUTPUT)
 
 clean:
-	rm -rf $(OBJDIR)
+	rm -rf build_pz build_pz_win
 	rm -f pzdoom pzdoom.exe
 
 $(OUTPUT): $(OBJS)

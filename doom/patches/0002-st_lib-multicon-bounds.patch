@@ -1,0 +1,98 @@
+PZDOOM patch 0002 — bounds-check multi-icon status bar widgets
+
+st_multicon_t gains numicons (arms 2, faces ST_NUMFACES=42, keys NUMCARDS=6).
+STlib_updateMultIcon() never indexes p[] outside [0, numicons), never
+dereferences an out-of-range oldinum, and skips NULL patches. This replaces
+PZDOOM 0.1.1-0.2.1's uncommitted '*inum < 2' guard, which also blanked
+Doomguy's face (index >= 2 whenever hurt) and the red card / skull keys.
+Applies on top of ozkl/doomgeneric @ 3b1d53020373b502035d7d48dede645a7c429feb.
+
+diff --git a/doomgeneric/st_lib.c b/doomgeneric/st_lib.c
+index 7ce978d..866d53b 100644
+--- a/doomgeneric/st_lib.c
++++ b/doomgeneric/st_lib.c
+@@ -188,6 +188,7 @@ STlib_initMultIcon
+   int			x,
+   int			y,
+   patch_t**		il,
++  int			numicons,
+   int*			inum,
+   boolean*		on )
+ {
+@@ -197,6 +198,7 @@ STlib_initMultIcon
+     i->inum	= inum;
+     i->on	= on;
+     i->p	= il;
++    i->numicons	= numicons;
+ }
+ 
+ 
+@@ -210,10 +212,18 @@ STlib_updateMultIcon
+     int			h;
+     int			x;
+     int			y;
++    int			inum = *mi->inum;
+ 
+-    if (*mi->on && (mi->oldinum != *mi->inum || refresh) && (*mi->inum != -1))
++    if (*mi->on && (mi->oldinum != inum || refresh) && (inum != -1))
+     {
+-	if (mi->oldinum != -1)
++	// PZDOOM: never index outside the icon table. A value outside
++	// [0, numicons) cannot come from valid game state (see doomtype.h);
++	// leave the previously drawn icon alone and try again next time.
++	if (inum < 0 || inum >= mi->numicons)
++	    return;
++
++	if (mi->oldinum != -1
++	 && mi->oldinum < mi->numicons && mi->p[mi->oldinum])
+ 	{
+ 	    x = mi->x - SHORT(mi->p[mi->oldinum]->leftoffset);
+ 	    y = mi->y - SHORT(mi->p[mi->oldinum]->topoffset);
+@@ -225,8 +235,9 @@ STlib_updateMultIcon
+ 
+ 	    V_CopyRect(x, y-ST_Y, st_backing_screen, w, h, x, y);
+ 	}
+-	V_DrawPatch(mi->x, mi->y, mi->p[*mi->inum]);
+-	mi->oldinum = *mi->inum;
++	if (mi->p[inum])
++	    V_DrawPatch(mi->x, mi->y, mi->p[inum]);
++	mi->oldinum = inum;
+     }
+ }
+ 
+diff --git a/doomgeneric/st_lib.h b/doomgeneric/st_lib.h
+index 3a8f521..1cccd1e 100644
+--- a/doomgeneric/st_lib.h
++++ b/doomgeneric/st_lib.h
+@@ -92,10 +92,14 @@ typedef struct
+ 
+     // list of icons
+     patch_t**		p;
+-    
++
++    // PZDOOM: number of entries in p[] (arms 2, faces ST_NUMFACES,
++    // keys NUMCARDS) so that *inum can be bounds-checked before indexing.
++    int			numicons;
++
+     // user data
+     int			data;
+-    
++
+ } st_multicon_t;
+ 
+ 
+@@ -175,12 +179,14 @@ STlib_updatePercent
+ 
+ 
+ // Multiple Icon widget routines
++// PZDOOM: numicons = number of entries in il[].
+ void
+ STlib_initMultIcon
+ ( st_multicon_t*	mi,
+   int			x,
+   int			y,
+   patch_t**		il,
++  int			numicons,
+   int*			inum,
+   boolean*		on );
+ 

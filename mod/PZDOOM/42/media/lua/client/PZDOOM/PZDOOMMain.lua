@@ -2,7 +2,10 @@
 -- PZDOOMMain.lua — PZDOOM entry point
 --
 -- Hooks into the world object context menu to add "Play DOOM" on TVs.
--- TV detection pattern verified from ISRadioAndTvMenu.lua:7 and ISHutchMenu.lua.
+-- TV detection: IsoTelevision (zombie.iso.objects.IsoTelevision extends
+-- IsoWaveSignal, Kahlua-exposed, verified against the 42.21 jar). Vanilla's
+-- ISRadioAndTvMenu.lua:7 pattern (IsoWaveSignal + sprite + no RadioItemID)
+-- also matches placed map radios, which is why we don't use it.
 --
 
 require "PZDOOM/PZDOOMWindow"
@@ -22,10 +25,8 @@ function PZDOOMMain.onContext(player, context, worldobjects, test)
 
     -- Look for a TV in the clicked objects
     for _, object in ipairs(worldobjects) do
-        -- TV = IsoWaveSignal without RadioItemID moddata
-        -- Verified from ISRadioAndTvMenu.lua:7
-        if instanceof(object, "IsoWaveSignal") and object:getSprite()
-           and not object:getModData().RadioItemID then
+        -- TV = IsoTelevision (radios are IsoRadio; both extend IsoWaveSignal)
+        if instanceof(object, "IsoTelevision") and object:getSprite() then
             local playerObj = getSpecificPlayer(player)
             context:addOption("Play DOOM", playerObj, PZDOOMMain.openDoom)
             return  -- only add once even if multiple TVs in click area

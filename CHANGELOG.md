@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.3.0 — 2026-10-15
+
+Status-bar fix, the real cause of the old demo crash, and PZFB 1.8 session safety.
+Works with PZFB 1.7.x (legacy behaviour); **PZFB 1.8.0 recommended**. Existing
+users get the new binaries automatically (see the redeploy fix below).
+
+### Fixed
+- **Doomguy's face and the red keycard / skull keys were never drawn.** Since
+  0.1.1 the status-bar multi-icon widgets were clamped to two icons as a crash
+  work-around, which blanked the face (42 patches) and keys 3–6. Every widget now
+  knows its own icon count (face 42, arms 2, keys 6) and bounds-checks against it.
+  Verified: face drawn in 100 % of status-bar frames across a 420 s attract-mode
+  run (was 30.8 %, then a crash); IDKFA shows all three skull keys and a full
+  yellow ARMS panel.
+- **The real cause of the demo-playback crash** (0.2.1 still segfaulted 49 s into
+  DEMO1 on Linux). Upstream doomgeneric makes `boolean` a **1-byte** type on
+  Linux, but id's `st_stuff.c` binds the ARMS widgets to
+  `(int *) &plyr->weaponowned[i+1]` — reading four flags as one int (pistol +
+  shotgun = 257) and indexing far outside the icon table. `boolean` is int-sized
+  again, the arms widgets read a proper `int` shadow array, and `V_DrawPatch`
+  ignores NULL patches. Windows never crashed (4-byte enum there) but had the
+  blank face/keys.
+- **Windows: DOOM's startup text no longer leaks into the frame pipe.** The old
+  `_dup2(stderr, stdout)` silently failed under Wine/Proton, so the 1.6 KB
+  banner went down the frame pipe and every frame was shifted/blue. `stdout` is
+  now `freopen()`'d to NUL/`/dev/null` first thing in `main()`; frames use the
+  saved fd as before.
+- **Bundled binaries are really redeployed** to `~/Zomboid/PZDOOM/` when the mod
+  version changes. 0.2.1's "redeploy on version bump" never ran for existing
+  users because `findBinary()` returned early whenever a binary existed — so
+  0.2.1's BMI2 fix never reached people who already had `pzdoom.exe`. A
+  version stamp (`~/Zomboid/Lua/PZDOOM_deployed_version.txt`) now drives it.
+- Closing the DOOM window really removes it (B42's `ISCollapsableWindow:close()`
+  only hides) and releases the input panel's keyboard hooks and listeners
+  (`cleanup()` on PZFB 1.8, the panel's own `close()` on 1.7).
+- "Play DOOM" is offered on televisions only (`IsoTelevision`); placed radios
+  also matched before.
+
+### Changed
+- **Only stops what it started.** DOOM is launched with `PZFB.gameStartArgs`
+  (argv, no quoting) and keeps the PZFB 1.8 session id; closing the window calls
+  a stop scoped to that id, so an unused or finished DOOM window can no longer
+  kill a running PZEMU game or PZVP video. If another PZFB mod takes over the
+  shared slot, the window says so instead of showing foreign frames. On PZFB
+  1.7.x: legacy stop, but only if DOOM actually started in this window.
+- DOOM exits as soon as PZFB closes its stdin (PZFB 1.8 graceful stop) — no
+  more waiting for the force-kill.
+- A DOOM window that is stopped/errored no longer polls PZFB's global game
+  status (it could display another mod's frames into its 320×200 texture).
+
+### Build
+- `doom/patches/0001…0004*.patch` are committed; `doom/build.sh` clones upstream
+  `ozkl/doomgeneric` pinned to `3b1d530`, applies the patches idempotently
+  ("already applied" is fine, a conflict says `--reset`), copies
+  `doom/src/` in, builds Linux and/or Windows (`--windows`, `--all`), refuses any
+  binary containing BMI2 instructions, and `--install` writes
+  `pzdoom.dat` / `pzdoom_win.dat` into the mod. A fresh clone now builds the
+  shipped binaries (the old script needed files that weren't in the repo).
+  MinGW SDL2 2.30.12 / SDL2_mixer 2.8.1 dev packages are downloaded on demand.
+- Both binaries baseline x86-64, BMI2 count 0 / 0.
+- Verified: Linux build byte-identical from a fresh clone; Windows binary run
+  under Wine through a Win32-pipe parent (frames aligned, keys accepted, exits
+  1 ms after stdin EOF). Real Windows and in-game runs pending.
+
 ## 0.2.1 — 2026-05-23
 
 Fixes a crash on older CPUs.

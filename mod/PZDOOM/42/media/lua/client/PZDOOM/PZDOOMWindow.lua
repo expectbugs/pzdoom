@@ -74,6 +74,10 @@ function PZDOOMGamePanel:render()
     elseif game.state == "STOPPED" then
         self:drawText("DOOM has exited.", 10, 10, 0.7, 0.7, 0.7, 0.8, UIFont.Medium)
         return
+    elseif game.state == "TAKEN" then
+        self:drawText("DOOM was stopped.", 10, 10, 0.9, 0.7, 0.3, 0.9, UIFont.Medium)
+        self:drawText(game.errorMsg or "", 10, 10 + FONT_HGT_MEDIUM + 4, 0.8, 0.8, 0.8, 0.9, UIFont.Small)
+        return
     end
 
     -- Draw the DOOM framebuffer scaled to fit panel (aspect-correct)
@@ -361,15 +365,31 @@ function PZDOOMWindow:onWelcomeDismissed()
     self.gamePanel:grabInput()
 end
 
+--
+-- Close = real teardown. B42's ISCollapsableWindow:close() only hides the
+-- window; a hidden window still holds the game panel, whose PZFB event
+-- listeners would leak, and reopening would create a second one.
+--
 function PZDOOMWindow:close()
+    -- Stops only what DOOM started (no-op if DOOM never ran in this window).
     if self.game then
         self.game:stop()
     end
+    -- Input panel teardown (PZFB Contract C3). Children are not notified by
+    -- removeFromUIManager(), so do it explicitly. PZFB 1.8 has cleanup()
+    -- (release capture + remove every listener). On 1.7.x the panel's own
+    -- close() does the same work (release + remove listeners + hide) and is
+    -- safe on a child panel: ISPanelJoypad:close() is just setVisible(false).
     if self.gamePanel then
-        self.gamePanel:releaseInput()
+        if self.gamePanel.cleanup then
+            self.gamePanel:cleanup()
+        else
+            self.gamePanel:close()
+        end
     end
     PZDOOMWindow.instance = nil
-    ISCollapsableWindow.close(self)
+    self:setVisible(false)
+    self:removeFromUIManager()
 end
 
 --

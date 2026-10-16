@@ -4,6 +4,10 @@
 -- Manages the doomgeneric_pz process lifecycle, translates LWJGL key codes
 -- to DOOM key codes, and handles frame consumption from the ring buffer.
 --
+-- PZFB compatibility: works with PZFB 1.8 (session-scoped game slot) and
+-- degrades to legacy behavior on PZFB 1.7.x Lua or class files. Every 1.8-only
+-- function is feature-detected before use.
+--
 
 require "PZFB/PZFBApi"
 
@@ -226,26 +230,44 @@ end
 
 --
 -- Find the DOOM binary path.
--- Auto-deploys from mod .dat files if not already present.
+-- Always runs deployBinaries() first: it copies the bundled binaries on first
+-- run AND re-copies them when mod.info's modversion changed (0.2.1 returned
+-- early whenever the binary already existed, so the version-bump redeploy
+-- never ran for existing users). The check is cheap: a stamp-file read plus
+-- one fileSize() per binary.
 --
 local function findBinary()
     local binaryName = isWindows() and "pzdoom.exe" or "pzdoom"
     local userPath = getUserDir() .. getFileSeparator() .. binaryName
 
-    -- Already deployed?
-    if PZFB.fileSize(userPath) > 0 then
-        return userPath
-    end
-
-    -- Try auto-deploy from mod's .dat files
     deployBinaries()
 
-    -- Check again
     if PZFB.fileSize(userPath) > 0 then
         return userPath
     end
 
     return nil
+end
+
+--
+-- PZFB session API (PZFB 1.8, Contract C1) with 1.7.x fallbacks.
+-- PZFB has ONE game/stream slot shared by every mod. 1.8 tags each start with
+-- a session id so a mod can stop/read only what it started. Everything below
+-- degrades to the legacy global-slot behavior when the Lua API or the deployed
+-- class files are still 1.7.x (hasSessions() false / functions absent).
+--
+
+-- True when PZFB reports session support (Lua 1.8+ AND class files 1.8+).
+local function pzfbHasSessions()
+    return PZFB.hasSessions ~= nil and PZFB.hasSessions() == true
+end
+
+-- Do we still own the shared slot? Legacy PZFB can't tell, so assume yes.
+local function pzfbOwnsSession(id)
+    if PZFB.ownsSession then
+        return PZFB.ownsSession(id)
+    end
+    return true
 end
 
 --
@@ -300,12 +322,14 @@ end
 function PZDOOMGame:new()
     local o = {}
     setmetatable(o, { __index = PZDOOMGame })
-    o.state = "IDLE"          -- IDLE, STARTING, RUNNING, STOPPED, ERROR
+    o.state = "IDLE"          -- IDLE, STARTING, RUNNING, STOPPED, ERROR, TAKEN
     o.fb = nil                -- PZFB framebuffer handle
     o.currentFrame = -1       -- last displayed frame index
     o.binaryPath = nil        -- resolved binary path
     o.wadPath = nil           -- selected WAD path
     o.errorMsg = nil          -- error message for display
+    o.started = false         -- true while a DOOM process we launched may be alive
+    o.sessionId = nil         -- PZFB 1.8 session id of that process (nil on legacy PZFB)
 
     -- Build key map on first use
     if not KEY_MAP[Keyboard.KEY_ESCAPE] then
@@ -336,24 +360,71 @@ function PZDOOMGame:start(wadPath)
     -- Create framebuffer (NEAREST filtering for pixel-perfect DOOM)
     self.fb = PZFB.create(PZDOOMGame.DOOM_WIDTH, PZDOOMGame.DOOM_HEIGHT)
 
-    -- Launch the process
-    local args = '-iwad "' .. wadPath .. '"'
-    PZFB.gameStart(self.binaryPath, PZDOOMGame.DOOM_WIDTH, PZDOOMGame.DOOM_HEIGHT, args)
+    -- Launch the process. gameStartArgs (PZFB 1.7.0+) passes argv verbatim,
+    -- so WAD paths with spaces/quotes/Unicode need no escaping. Older PZFB
+    -- only has the quote-parsed string form.
+    local id
+    if PZFB.gameStartArgs then
+        id = PZFB.gameStartArgs(self.binaryPath, PZDOOMGame.DOOM_WIDTH, PZDOOMGame.DOOM_HEIGHT,
+            { "-iwad", wadPath })
+    else
+        id = PZFB.gameStart(self.binaryPath, PZDOOMGame.DOOM_WIDTH, PZDOOMGame.DOOM_HEIGHT,
+            '-iwad "' .. wadPath .. '"')
+    end
+    -- PZFB 1.8 returns the session id; 1.7.x returns nothing (nil = legacy).
+    self.sessionId = id
+    self.started = true
     self.state = "STARTING"
     self.errorMsg = nil
+    if pzfbHasSessions() then
+        print("[PZDOOM] DOOM started (PZFB session " .. tostring(id) .. ")")
+    else
+        print("[PZDOOM] DOOM started (legacy PZFB game slot, no session ids)")
+    end
 end
 
 --
--- Stop the DOOM process and clean up
+-- Stop the DOOM process and clean up.
+-- Only ever stops what we started: with PZFB 1.8 the stop is scoped to our
+-- session id (a no-op if another mod has since taken the slot); with legacy
+-- PZFB the unconditional gameStop() is only issued if DOOM actually started.
+-- Closing a window where DOOM never ran does not touch PZFB's game slot.
 --
 function PZDOOMGame:stop()
-    PZFB.gameStop()
+    if self.started then
+        PZFB.gameStop(self.sessionId)
+    end
+    self.started = false
+    self.sessionId = nil
     if self.fb then
         PZFB.destroy(self.fb)
         self.fb = nil
     end
     self.currentFrame = -1
     self.state = "IDLE"
+end
+
+--
+-- Another mod started a game/stream, which ends our session inside PZFB.
+-- Our process is already gone; just stop treating the slot as ours.
+--
+function PZDOOMGame:_onSessionTaken()
+    self.started = false
+    self.sessionId = nil
+    if self.fb then
+        PZFB.destroy(self.fb)
+        self.fb = nil
+    end
+    self.currentFrame = -1
+    self.errorMsg = "Another mod took over PZFB's game slot. Close and reopen to play again."
+    self.state = "TAKEN"
+end
+
+--
+-- Does our DOOM process still own PZFB's shared game slot?
+--
+function PZDOOMGame:ownsSession()
+    return self.started and pzfbOwnsSession(self.sessionId)
 end
 
 --
@@ -372,7 +443,17 @@ end
 -- Update game state — call once per frame from render()
 --
 function PZDOOMGame:update()
-    if self.state == "IDLE" or self.state == "ERROR" then return end
+    -- Only STARTING/RUNNING have a live process worth polling. PZFB's status
+    -- getters are global (not per session), so once we are STOPPED/ERROR we
+    -- must not keep reading them — they could describe another mod's game.
+    if self.state ~= "STARTING" and self.state ~= "RUNNING" then return end
+
+    -- PZFB 1.8: another mod's start replaces our session (and kills our
+    -- process). Treat "not ours any more" as a takeover, never as our status.
+    if not self:ownsSession() then
+        self:_onSessionTaken()
+        return
+    end
 
     local status = PZFB.gameStatus()
 
@@ -384,6 +465,16 @@ function PZDOOMGame:update()
         else
             self.state = "STOPPED"
         end
+        -- The process is gone, but with PZFB 1.8 the dead/failed session still
+        -- owns the shared slot until it is stopped or replaced: release it with
+        -- a scoped stop (cannot affect anyone else). On legacy PZFB an unscoped
+        -- stop could hit another mod's game, so leave the slot alone there (the
+        -- next start replaces it).
+        if pzfbHasSessions() then
+            PZFB.gameStop(self.sessionId)
+        end
+        self.started = false
+        self.sessionId = nil
         return
     end
 
@@ -401,7 +492,8 @@ function PZDOOMGame:update()
 
     local latest = bufStart + bufCount - 1
     if latest ~= self.currentFrame then
-        if PZFB.streamFrame(self.fb, latest) then
+        -- Third argument = session id: scoped on PZFB 1.8, ignored by 1.7.x.
+        if PZFB.streamFrame(self.fb, latest, self.sessionId) then
             self.currentFrame = latest
         end
     end

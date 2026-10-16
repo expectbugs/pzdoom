@@ -5,12 +5,13 @@
 // Audio: handled by SDL2_mixer via i_sdlsound.c/i_sdlmusic.c (separate)
 //
 // CRITICAL: DOOM's codebase has ~289 printf/puts calls that write to stdout.
-// We redirect stdout → stderr (discarded by ProcessBuilder) in DG_Init,
-// and write frame data to the saved original stdout fd via s_FrameOut.
+// main() first dup()s the original stdout fd for frame data (s_FrameOut) and
+// reopens stdout on the null device, so no text can ever enter the frame pipe.
 //
 // Protocol:
 //   stdout (saved fd): [RGBA pixels, 256000 bytes per frame, continuous]
 //   stdin:             [pressed:u8, doom_keycode:u8] per event, non-blocking reads
+//   stdin EOF or a failed frame write = host went away -> exit(0)
 
 #include "doomgeneric.h"
 
@@ -58,13 +59,32 @@ static void addKeyToQueue(int pressed, unsigned char keyCode)
     s_KeyQueueWriteIndex %= KEYQUEUE_SIZE;
 }
 
+// The host (PZFB) closes our stdin when it ends the session. Treat that EOF
+// as "quit now" so a stop doesn't have to wait for a frame write to fail or
+// for a signal. DOOM has nothing to save here, so exit(0) is a clean exit.
+static void hostClosedStdin(void)
+{
+    exit(0);
+}
+
 // Read all available key events from stdin (non-blocking)
 static void readStdinKeys(void)
 {
 #ifdef _WIN32
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     DWORD avail = 0;
-    while (PeekNamedPipe(hStdin, NULL, 0, NULL, &avail, NULL) && avail >= 2) {
+    for (;;) {
+        if (!PeekNamedPipe(hStdin, NULL, 0, NULL, &avail, NULL)) {
+            // Parent closed the pipe (ERROR_BROKEN_PIPE). Other failures
+            // (e.g. stdin is a console, not a pipe) are left alone.
+            if (GetLastError() == ERROR_BROKEN_PIPE) {
+                hostClosedStdin();
+            }
+            break;
+        }
+        if (avail < 2) {
+            break;
+        }
         uint8_t buf[2];
         DWORD bytesRead = 0;
         if (ReadFile(hStdin, buf, 2, &bytesRead, NULL) && bytesRead == 2) {
@@ -88,12 +108,14 @@ static void readStdinKeys(void)
             if (n == 1) {
                 addKeyToQueue(buf[0], buf[1]);
                 continue;
+            } else if (n == 0) {
+                hostClosedStdin(); // EOF: parent closed the pipe
             } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Byte 2 not available yet — re-buffer byte 0 for next call
                 s_pendingByte = buf[0];
                 break;
             } else {
-                // EOF or real error — pipe is dead, discard partial event
+                // Real error — discard partial event
                 break;
             }
         }
@@ -104,43 +126,64 @@ static void readStdinKeys(void)
         } else if (n == 1) {
             s_pendingByte = buf[0]; // buffer for next call
             break;
+        } else if (n == 0) {
+            hostClosedStdin(); // EOF: parent closed the pipe
         } else {
-            break; // EAGAIN or pipe closed
+            break; // EAGAIN or real error
         }
     }
 #endif
 }
 
-void DG_Init(void)
+// Claim the original stdout for frame output and make DOOM's own stdout spam
+// disappear. Must run before ANY stdio output, so main() calls it first.
+//
+// The frame stream is s_FrameOut on a dup of the original fd 1. stdout itself
+// is then reopened on the null device at the FILE level. Earlier versions did
+// dup2(stderr, stdout) instead; under Wine/Proton that silently fails when the
+// host hands the child a file or NUL as stderr, and DOOM's ~1.6 KB startup
+// banner went down the frame pipe, shifting every frame (verified 0.3.0).
+// freopen() does not depend on stderr at all, and keeps the stderr log that
+// PZFB shows on errors free of printf noise.
+static void setupFrameOutput(void)
 {
 #ifdef _WIN32
-    // Set stdout/stdin to binary mode (prevent \n → \r\n conversion)
+    // Binary mode on the std handles (prevent \n → \r\n conversion)
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stdin), _O_BINARY);
 
-    // Save original stdout for frame output, redirect stdout → stderr (discarded)
     int frame_fd = _dup(_fileno(stdout));
-    _dup2(_fileno(stderr), _fileno(stdout));
     s_FrameOut = _fdopen(frame_fd, "wb");
+    if (freopen("NUL", "w", stdout) == NULL) {
+        // freopen closed the old stream first; printf() now fails harmlessly.
+    }
+#else
+    int frame_fd = dup(STDOUT_FILENO);
+    s_FrameOut = fdopen(frame_fd, "wb");
+    if (freopen("/dev/null", "w", stdout) == NULL) {
+        // freopen closed the old stream first; printf() now fails harmlessly.
+    }
 
+    // Try to increase pipe buffer for smoother frame delivery
+#ifdef F_SETPIPE_SZ
+    fcntl(frame_fd, F_SETPIPE_SZ, 1048576); // 1MB, ignore failure
+#endif
+#endif
+}
+
+void DG_Init(void)
+{
+    if (!s_FrameOut) {
+        setupFrameOutput(); // main() normally did this already
+    }
+#ifdef _WIN32
     s_StartTicks = GetTickCount();
 #else
-    // Save original stdout for frame output, redirect stdout → stderr (discarded)
-    // ProcessBuilder sets stderr to /dev/null, so all printf() output vanishes.
-    int frame_fd = dup(STDOUT_FILENO);
-    dup2(STDERR_FILENO, STDOUT_FILENO);
-    s_FrameOut = fdopen(frame_fd, "wb");
-
     // Set stdin to non-blocking
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     if (flags != -1) {
         fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
     }
-
-    // Try to increase pipe buffer for smoother frame delivery
-#ifdef F_SETPIPE_SZ
-    fcntl(fileno(s_FrameOut), F_SETPIPE_SZ, 1048576); // 1MB, ignore failure
-#endif
 
     clock_gettime(CLOCK_MONOTONIC, &s_StartTime);
 #endif
@@ -215,6 +258,7 @@ void DG_SetWindowTitle(const char *title)
 
 int main(int argc, char **argv)
 {
+    setupFrameOutput(); // before anything can printf()
     doomgeneric_Create(argc, argv);
 
     for (;;) {

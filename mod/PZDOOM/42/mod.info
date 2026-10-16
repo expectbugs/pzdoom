@@ -1,8 +1,8 @@
 name=DOOM
 id=PZDOOM
 require=PZFB
-description=Play DOOM in Project Zomboid. Right-click any TV!
+description=Play real DOOM in Project Zomboid. Right-click any TV! Bundled shareware DOOM + Freedoom Phase 1 & 2, drop your own WADs into Zomboid/PZDOOM/. Hover the window to play, Scroll Lock to lock the keyboard, ESC to pause. v0.3.0: status bar fixed (Doomguy's face and the keys are back), demo crash fixed, safe alongside PZEMU/PZVP. Requires PZFB (Video Framebuffer) and its one-time install step; PZFB 1.8.0 recommended.
 poster=poster.png
 icon=icon.png
-modversion=0.2.1
+modversion=0.3.0
 versionMin=42.0

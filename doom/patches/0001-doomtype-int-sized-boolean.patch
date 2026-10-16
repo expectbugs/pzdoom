@@ -1,0 +1,38 @@
+PZDOOM patch 0001 — int-sized boolean (root cause of the status-bar crash)
+
+Upstream doomgeneric 3b1d530 defines boolean as 'unsigned char' whenever
+<stdbool.h> is in scope, and doomtype.h itself includes <stdbool.h> on
+non-Windows. id's engine assumes boolean is int-sized (st_stuff.c binds the
+arms widgets to (int *) &plyr->weaponowned[i+1]); with a 1-byte boolean that
+read 4 adjacent flags as one int (257, 65793, ...) and indexed far outside
+arms[][] -> SIGSEGV during demo playback as weapons were picked up. On
+Windows only some translation units saw <stdbool.h> (mixed struct layouts).
+Applies on top of ozkl/doomgeneric @ 3b1d53020373b502035d7d48dede645a7c429feb.
+
+diff --git a/doomgeneric/doomtype.h b/doomgeneric/doomtype.h
+index 7acaa49..21dd9f2 100644
+--- a/doomgeneric/doomtype.h
++++ b/doomgeneric/doomtype.h
+@@ -64,9 +64,19 @@
+ 
+ #if defined(__cplusplus) || defined(__bool_true_false_are_defined)
+ 
+-// Use builtin bool type with C++.
+-
+-typedef unsigned char boolean;
++// PZDOOM: int, not unsigned char.
++//
++// Upstream (cba6149/3b1d530) made boolean a 1-byte type whenever <stdbool.h>
++// is in scope. On non-Windows this very header includes <stdbool.h>, so every
++// translation unit got a 1-byte boolean, while id's engine code assumes
++// boolean is int-sized: st_stuff.c binds the status-bar arms widgets to
++// (int *) &plyr->weaponowned[i+1], which then read four adjacent booleans as
++// one int (e.g. 0x0101 = 257) and indexed far outside arms[][] -> segfault
++// ("demo crash"). On Windows only some TUs saw <stdbool.h>, giving mixed
++// 1-byte/4-byte layouts of shared structs and globals. An int-sized boolean
++// restores the original ABI everywhere and matches the enum branch below.
++
++typedef int boolean;
+ 
+ #else
+ 
